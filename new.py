@@ -1,8 +1,9 @@
 """Scaffold today's practice problem.
 
 Usage:
-    py new.py              # fetch today's LeetCode daily problem
-    py new.py two-sum      # scaffold a specific LeetCode problem by slug
+    py new.py              # next problem from ROADMAP.md that you haven't started
+    py new.py --daily      # LeetCode's daily problem instead
+    py new.py two-sum      # a specific LeetCode problem by slug
     py new.py --lang java  # choose solution language (py, java, cpp, js)
 
 Creates problems/YYYY-MM-DD-<slug>/ with README.md (problem + notes) and a
@@ -13,12 +14,14 @@ import argparse
 import datetime as dt
 import json
 import pathlib
+import re
 import sys
 import urllib.request
 
 ROOT = pathlib.Path(__file__).resolve().parent
 PROBLEMS = ROOT / "problems"
 PROGRESS = ROOT / "PROGRESS.md"
+ROADMAP = ROOT / "ROADMAP.md"
 API = "https://leetcode.com/graphql"
 
 FIELDS = "title titleSlug difficulty content topicTags { name } codeSnippets { langSlug code }"
@@ -51,24 +54,48 @@ def gql(query, variables=None):
     return data["data"]
 
 
+def started_slugs():
+    if not PROBLEMS.exists():
+        return set()
+    # folder names look like 2026-11-10-two-sum
+    return {p.name[11:] for p in PROBLEMS.iterdir() if p.is_dir()}
+
+
+def next_roadmap_slug():
+    slugs = re.findall(r"^- `([a-z0-9-]+)`", ROADMAP.read_text(encoding="utf-8"), re.M)
+    done = started_slugs()
+    for i, s in enumerate(slugs, 1):
+        if s not in done:
+            return s, i, len(slugs)
+    return None, len(slugs), len(slugs)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("slug", nargs="?", help="LeetCode problem slug, e.g. two-sum")
+    ap.add_argument("--daily", action="store_true", help="use LeetCode's daily problem")
     ap.add_argument("--lang", default="py", choices=LANGS)
     args = ap.parse_args()
 
-    if args.slug:
-        q = gql(SLUG_QUERY, {"s": args.slug})["question"]
+    slug = args.slug
+    if not slug and not args.daily:
+        slug, n, total = next_roadmap_slug()
+        if not slug:
+            sys.exit("Roadmap finished! Use `py new.py --daily` from now on.")
+        print(f"Roadmap problem {n} of {total}")
+
+    if slug:
+        q = gql(SLUG_QUERY, {"s": slug})["question"]
         if not q:
-            sys.exit(f"No problem found with slug '{args.slug}'")
+            sys.exit(f"No problem found with slug '{slug}'")
     else:
         q = gql(DAILY_QUERY)["activeDailyCodingChallengeQuestion"]["question"]
 
     today = dt.date.today().isoformat()
-    folder = PROBLEMS / f"{today}-{q['titleSlug']}"
-    if folder.exists():
-        print(f"Already exists: {folder.relative_to(ROOT)}")
+    if q["titleSlug"] in started_slugs():
+        print(f"You already started {q['title']}, see the problems/ folder.")
         return
+    folder = PROBLEMS / f"{today}-{q['titleSlug']}"
     folder.mkdir(parents=True)
 
     url = f"https://leetcode.com/problems/{q['titleSlug']}/"
